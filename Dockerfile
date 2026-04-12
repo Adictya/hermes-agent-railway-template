@@ -4,8 +4,11 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
+COPY patches/ /app/patches/
+
 RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent && \
     cd /tmp/hermes-agent && \
+    python /app/patches/apply-hermes-telegram-chat-id-fix.py /tmp/hermes-agent && \
     uv pip install --system --no-cache -e ".[all]" && \
     rm -rf /tmp/hermes-agent/.git
 
