@@ -14,10 +14,15 @@ def main() -> int:
 
     repo = Path(sys.argv[1])
     telegram_path = repo / "gateway" / "platforms" / "telegram.py"
+    send_tool_path = repo / "tools" / "send_message_tool.py"
     text = telegram_path.read_text()
+    send_tool_text = send_tool_path.read_text()
 
-    if "def _normalize_chat_id(chat_id: Any) -> Any:" in text:
-        print("Telegram chat_id fix already present; skipping patch")
+    if (
+        "def _normalize_chat_id(chat_id: Any) -> Any:" in text
+        and "def _normalize_telegram_chat_id(chat_id):" in send_tool_text
+    ):
+        print("Telegram chat_id fixes already present; skipping patch")
         return 0
 
     text = replace_once(
@@ -197,8 +202,26 @@ def main() -> int:
         "message reaction",
     )
 
+    send_tool_text = replace_once(
+        send_tool_text,
+        """def _error(message: str) -> dict:\n    \"\"\"Build a standardized error payload with redacted content.\"\"\"\n    return {\"error\": _sanitize_error_text(message)}\n\n\nSEND_MESSAGE_SCHEMA = {\n""",
+        """def _error(message: str) -> dict:\n    \"\"\"Build a standardized error payload with redacted content.\"\"\"\n    return {\"error\": _sanitize_error_text(message)}\n\n\ndef _normalize_telegram_chat_id(chat_id):\n    \"\"\"Convert numeric Telegram chat IDs to ints while preserving string targets.\"\"\"\n    if chat_id is None or isinstance(chat_id, int):\n        return chat_id\n\n    normalized = str(chat_id).strip()\n    if re.fullmatch(r\"-?\\d+\", normalized):\n        return int(normalized)\n    return normalized\n\n\nSEND_MESSAGE_SCHEMA = {\n""",
+        "send_message_tool helper",
+    )
+    send_tool_text = replace_once(
+        send_tool_text,
+        "int_chat_id = int(chat_id)\n",
+        "telegram_chat_id = _normalize_telegram_chat_id(chat_id)\n",
+        "send_message_tool target id",
+    )
+    send_tool_text = send_tool_text.replace(
+        "chat_id=int_chat_id", "chat_id=telegram_chat_id"
+    )
+
     telegram_path.write_text(text)
+    send_tool_path.write_text(send_tool_text)
     print(f"Applied Telegram chat_id fix to {telegram_path}")
+    print(f"Applied Telegram chat_id fix to {send_tool_path}")
     return 0
 
 
