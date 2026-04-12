@@ -1,12 +1,9 @@
 services:
   hermes:
     build: .
-    ports:
-      - "8080:8080"
-    environment:
-      - PORT=8080
-      - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=admin
+    env_file:
+      - .env
+    restart: unless-stopped
     volumes:
       - hermes-data:/data
 

@@ -9,13 +9,8 @@ RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/he
     uv pip install --system --no-cache -e ".[all]" && \
     rm -rf /tmp/hermes-agent/.git
 
-COPY requirements.txt /app/requirements.txt
-RUN uv pip install --system --no-cache -r /app/requirements.txt
-
 RUN mkdir -p /data/.hermes
 
-COPY server.py /app/server.py
-COPY templates/ /app/templates/
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 

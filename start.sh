@@ -1,9 +1,14 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-mkdir -p /data/.hermes/sessions
-mkdir -p /data/.hermes/skills
-mkdir -p /data/.hermes/workspace
-mkdir -p /data/.hermes/pairing
+export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"
 
-exec python /app/server.py
+mkdir -p "$HERMES_HOME/sessions"
+mkdir -p "$HERMES_HOME/skills"
+mkdir -p "$HERMES_HOME/workspace"
+mkdir -p "$HERMES_HOME/pairing"
+mkdir -p "$HERMES_HOME/logs"
+mkdir -p "$HERMES_HOME/scripts"
+
+# Run the gateway as PID 1 so Hermes writes its own PID/runtime status files.
+exec hermes gateway run --replace -v

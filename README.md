@@ -1,15 +1,14 @@
 # Hermes Agent Railway Template
 
-One-click deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on [Railway](https://railway.app) with a web-based config UI and status dashboard.
+Deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on [Railway](https://railway.app) as a direct background gateway process.
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/hermes-agent)
 
 ## What you get
 
-- **Web Config UI** — configure LLM providers, messaging channels, tool API keys, and model settings from your browser
-- **Status Dashboard** — monitor gateway state, uptime, provider/channel status, and live logs
-- **Gateway Management** — start, stop, and restart the Hermes gateway from the UI
-- **Basic Auth** — password-protected admin panel
+- **Direct Gateway Startup** — the container runs `hermes gateway run` directly
+- **Cron-Compatible Runtime** — Hermes writes its own PID/runtime status files, so `hermes cron status` sees the live gateway
+- **Auto-Start on Deploy** — Railway starts Hermes immediately when the container boots
 - **Persistent Storage** — config and data survive container restarts via Railway volume
 
 ## Quick Start
@@ -17,57 +16,47 @@ One-click deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on
 ### Deploy to Railway
 
 1. Click the "Deploy on Railway" button above
-2. Set the `ADMIN_PASSWORD` environment variable (or a random one will be generated and printed to logs)
-3. Attach a volume mounted at `/data`
-4. Open your app URL — you'll be prompted for credentials (default username: `admin`)
-5. Configure at least one LLM provider API key and your messaging channels, then hit Save
-6. Once setup is complete, remove the public endpoint from your Railway service — the web UI is only needed for initial configuration and Hermes operates entirely through its configured channels (Telegram, Discord, Slack, etc.)
+2. Attach a volume mounted at `/data`
+3. Set your Hermes environment variables in Railway, for example:
+   - `LLM_MODEL`
+   - `OPENROUTER_API_KEY`
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_ALLOWED_USERS`
+4. Deploy the service
+5. Watch Railway logs for `Hermes Gateway Starting` and your messaging adapter connecting
 
 ### Run Locally with Docker
 
 ```bash
 docker build -t hermes-agent .
-docker run --rm -it -p 8080:8080 -e PORT=8080 -e ADMIN_PASSWORD=changeme -v hermes-data:/data hermes-agent
+docker run --rm -it --env-file .env -v hermes-data:/data hermes-agent
 ```
 
-Open `http://localhost:8080` and log in with `admin` / `changeme`.
+The container runs the Hermes gateway in the foreground and logs directly to stdout/stderr.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `8080` | Web server port |
-| `ADMIN_USERNAME` | `admin` | Basic auth username |
-| `ADMIN_PASSWORD` | *(generated)* | Basic auth password. If unset, a random password is generated and printed to stdout |
+| `HERMES_HOME` | `/data/.hermes` | Persistent Hermes home directory |
+| `LLM_MODEL` | *(unset)* | Default model Hermes should use |
+| `OPENROUTER_API_KEY` | *(unset)* | Example provider key |
+| `TELEGRAM_BOT_TOKEN` | *(unset)* | Telegram bot token |
+| `TELEGRAM_ALLOWED_USERS` | *(unset)* | Telegram user allowlist |
 
-All Hermes configuration (LLM providers, messaging channels, tool API keys) is managed through the web UI.
+Hermes will also read `/data/.hermes/.env` if you prefer to manage config from inside the container.
 
 ## Architecture
 
 ```
 Railway Container
-├── Python Web Server (Starlette + uvicorn)
-│   ├── / — Config editor + status dashboard
-│   ├── /health — Health check (no auth)
-│   └── /api/* — Config, status, logs, gateway control
-└── hermes gateway — managed as async subprocess
+├── /app/start.sh
+│   ├── creates persistent Hermes directories under /data/.hermes
+│   └── execs `hermes gateway run --replace -v`
+└── hermes gateway — runs as the main container process
 ```
 
-The web server runs on `$PORT` and manages the Hermes gateway as a child process. Gateway stdout/stderr is captured into a ring buffer and viewable in the dashboard.
-
-## API Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/` | Yes | Web UI |
-| `GET` | `/health` | No | Health check |
-| `GET` | `/api/config` | Yes | Get config (secrets masked) |
-| `PUT` | `/api/config` | Yes | Save config |
-| `GET` | `/api/status` | Yes | Gateway, provider, channel status |
-| `GET` | `/api/logs` | Yes | Recent gateway log lines |
-| `POST` | `/api/gateway/start` | Yes | Start gateway |
-| `POST` | `/api/gateway/stop` | Yes | Stop gateway |
-| `POST` | `/api/gateway/restart` | Yes | Restart gateway |
+This template is a worker-style Railway deployment. There is no bundled admin UI or HTTP health endpoint.
 
 ## Supported Providers
 
