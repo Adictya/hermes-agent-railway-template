@@ -9,6 +9,8 @@ Deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on [Railway]
 - **Direct Gateway Startup** — the container runs `hermes gateway run` directly
 - **Cron-Compatible Runtime** — Hermes writes its own PID/runtime status files, so `hermes cron status` sees the live gateway
 - **Auto-Start on Deploy** — Railway starts Hermes immediately when the container boots
+- **Bundled Taskwarrior Tooling** — `taskwarrior`, `node`, and `task-agent` are available in the container
+- **Preinstalled Task Skill** — the `taskwarrior-task-manager` skill is copied into `/data/.hermes/skills` on boot
 - **Persistent Storage** — config and data survive container restarts via Railway volume
 
 ## Quick Start
@@ -34,6 +36,8 @@ docker run --rm -it --env-file .env -v hermes-data:/data hermes-agent
 
 The container runs the Hermes gateway in the foreground and logs directly to stdout/stderr.
 
+Taskwarrior data uses the default home-based path, so with `HOME=/data` the task database lives under `/data/.task`. Boot also creates `/data/.taskrc` if it does not exist.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -52,7 +56,12 @@ Hermes will also read `/data/.hermes/.env` if you prefer to manage config from i
 Railway Container
 ├── /app/start.sh
 │   ├── creates persistent Hermes directories under /data/.hermes
+│   ├── seeds `/data/.hermes/skills/taskwarrior-task-manager/SKILL.md`
+│   ├── creates `/data/.task` for Taskwarrior data
+│   ├── creates `/data/.taskrc` if missing
 │   └── execs `hermes gateway run --replace -v`
+├── /usr/local/bin/task-agent
+│   └── wraps `node /opt/taskwrrior-task-manager/dist/task-agent.js`
 └── hermes gateway — runs as the main container process
 ```
 
