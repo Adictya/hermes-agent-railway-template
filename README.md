@@ -47,6 +47,30 @@ Open `http://localhost:8080/configure` and log in with `admin` / `changeme`.
 
 All Hermes configuration (LLM providers, messaging channels, tool API keys) is managed through the web UI.
 
+## GitHub CLI
+
+`gh` is installed in the container.
+
+Recommended auth setup:
+
+1. Set `GITHUB_TOKEN` in the web UI or as a service environment variable.
+2. Hermes already passes `GITHUB_TOKEN` into the gateway process, and `gh` can use that token non-interactively.
+
+For manual shell usage inside the container, either export `GH_TOKEN` or log in explicitly:
+
+```bash
+export GH_TOKEN="$GITHUB_TOKEN"
+gh auth status
+```
+
+Or:
+
+```bash
+printf '%s' "$GITHUB_TOKEN" | gh auth login --hostname github.com --with-token
+```
+
+Use a token with the scopes your workflows need, typically `repo`, `read:org`, and `workflow` for repository and PR automation.
+
 ## Architecture
 
 ```
