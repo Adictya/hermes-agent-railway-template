@@ -19,7 +19,7 @@ One-click deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on
 1. Click the "Deploy on Railway" button above
 2. Set the `ADMIN_PASSWORD` environment variable (or a random one will be generated and printed to logs)
 3. Attach a volume mounted at `/data`
-4. Open your app URL — you'll be prompted for credentials (default username: `admin`)
+4. Open your app URL at `/configure` — you'll be prompted for credentials (default username: `admin`)
 5. Configure at least one LLM provider API key and your messaging channels, then hit Save
 6. Once setup is complete, remove the public endpoint from your Railway service — the web UI is only needed for initial configuration and Hermes operates entirely through its configured channels (Telegram, Discord, Slack, etc.)
 
@@ -27,16 +27,19 @@ One-click deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on
 
 ```bash
 docker build -t hermes-agent .
-docker run --rm -it -p 8080:8080 -e PORT=8080 -e ADMIN_PASSWORD=changeme -v hermes-data:/data hermes-agent
+docker run --rm -it -p 8080:8080 -e PORT=8080 -e DASHBOARD_PORT=8081 -e ADMIN_PASSWORD=changeme -v hermes-data:/data hermes-agent
 ```
 
-Open `http://localhost:8080` and log in with `admin` / `changeme`.
+Open `http://localhost:8080/configure` and log in with `admin` / `changeme`.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `8080` | Web server port |
+| `PORT` | `8080` | Public reverse proxy port |
+| `DASHBOARD_PORT` | `8081` | Internal `server.py` port |
+| `API_SERVER_PORT` | `8642` | Internal Hermes API server port used for `/v1/*` |
+| `WEBHOOK_PORT` | `8645` | Internal Hermes webhook port used for `/webhooks/*` |
 | `ADMIN_USERNAME` | `admin` | Basic auth username |
 | `ADMIN_PASSWORD` | *(generated)* | Basic auth password. If unset, a random password is generated and printed to stdout |
 
@@ -46,21 +49,27 @@ All Hermes configuration (LLM providers, messaging channels, tool API keys) is m
 
 ```
 Railway Container
-├── Python Web Server (Starlette + uvicorn)
+├── Public Proxy (Starlette + uvicorn) on `$PORT`
+│   ├── /configure -> internal dashboard
+│   ├── /api/* -> internal dashboard API
+│   ├── /v1/* -> Hermes API server
+│   └── /webhooks/* -> Hermes webhook server
+├── Internal Dashboard (`server.py`) on `$DASHBOARD_PORT`
 │   ├── / — Config editor + status dashboard
-│   ├── /health — Health check (no auth)
+│   ├── /health — Dashboard health check
 │   └── /api/* — Config, status, logs, gateway control
-└── hermes gateway — managed as async subprocess
+└── hermes gateway — managed as async subprocess by `server.py`
 ```
 
-The web server runs on `$PORT` and manages the Hermes gateway as a child process. Gateway stdout/stderr is captured into a ring buffer and viewable in the dashboard.
+The public listener runs on `$PORT` and forwards `/configure` to the existing dashboard while keeping Hermes HTTP endpoints available on the same external port. `server.py` still manages the Hermes gateway as a child process, and gateway stdout/stderr is captured into a ring buffer viewable in the dashboard.
 
 ## API Endpoints
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| `GET` | `/` | Yes | Web UI |
-| `GET` | `/health` | No | Health check |
+| `GET` | `/` | No | Proxy info |
+| `GET` | `/configure` | Yes | Web UI |
+| `GET` | `/health` | No | Forwarded dashboard/gateway health check |
 | `GET` | `/api/config` | Yes | Get config (secrets masked) |
 | `PUT` | `/api/config` | Yes | Save config |
 | `GET` | `/api/status` | Yes | Gateway, provider, channel status |
@@ -68,6 +77,8 @@ The web server runs on `$PORT` and manages the Hermes gateway as a child process
 | `POST` | `/api/gateway/start` | Yes | Start gateway |
 | `POST` | `/api/gateway/stop` | Yes | Stop gateway |
 | `POST` | `/api/gateway/restart` | Yes | Restart gateway |
+| `*` | `/v1/*` | Depends on Hermes config | Forwarded to Hermes API server |
+| `*` | `/webhooks/*` | Depends on Hermes config | Forwarded to Hermes webhook server |
 
 ## Supported Providers
 
