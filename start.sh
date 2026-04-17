@@ -6,10 +6,10 @@ mkdir -p /data/.hermes/skills
 mkdir -p /data/.hermes/workspace
 mkdir -p /data/.hermes/pairing
 
-PUBLIC_PORT="${PORT:-8080}"
-export DASHBOARD_PORT="${DASHBOARD_PORT:-8081}"
+export PORT="${PORT:-8081}"
+export PROXY_PORT="${PROXY_PORT:-8080}"
 export API_SERVER_PORT="${API_SERVER_PORT:-8642}"
-export WEBHOOK_PORT="${WEBHOOK_PORT:-8645}"
+export WEBHOOK_PORT="${WEBHOOK_PORT:-8644}"
 
 cleanup() {
   trap - TERM INT EXIT
@@ -25,10 +25,10 @@ cleanup() {
 
 trap cleanup TERM INT EXIT
 
-env PORT="$DASHBOARD_PORT" python /app/server.py &
+python /app/server.py &
 dashboard_pid=$!
 
-env PORT="$PUBLIC_PORT" python /app/proxy.py &
+python /app/proxy.py &
 proxy_pid=$!
 
 set +e

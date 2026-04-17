@@ -1,4 +1,9 @@
+import hashlib
+import hmac
+import json
+import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -12,6 +17,7 @@ from starlette.routing import Route
 HERMES_HOME = os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
 ENV_FILE_PATH = Path(HERMES_HOME) / ".env"
 ALL_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+LINEAR_ROUTE_PREFIX = "linear-"
 HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -23,6 +29,7 @@ HOP_BY_HOP_HEADERS = {
     "upgrade",
     "content-length",
 }
+logger = logging.getLogger(__name__)
 
 
 def read_env_file(path: Path) -> dict[str, str]:
@@ -73,6 +80,25 @@ def webhook_base_url() -> str:
     return f"http://127.0.0.1:{port}"
 
 
+def linear_webhook_secret() -> str:
+    return merged_env().get("LINEAR_WEBHOOK_SECRET", "")
+
+
+def linear_webhook_max_age_seconds() -> int | None:
+    value = merged_env().get("LINEAR_WEBHOOK_MAX_AGE_SECONDS", "60").strip()
+    if not value:
+        return 60
+    try:
+        max_age = int(value)
+    except ValueError:
+        logger.warning(
+            "Invalid LINEAR_WEBHOOK_MAX_AGE_SECONDS=%r, defaulting to 60",
+            value,
+        )
+        return 60
+    return max_age if max_age > 0 else None
+
+
 def build_target_url(base_url: str, path: str, query: str) -> str:
     url = f"{base_url.rstrip('/')}{path}"
     if query:
@@ -111,11 +137,24 @@ async def proxy_request(
     path: str,
     *,
     forwarded_prefix: str | None = None,
+    body: bytes | None = None,
+    header_overrides: dict[str, str] | None = None,
+    stripped_headers: set[str] | None = None,
 ):
     client: httpx.AsyncClient = request.app.state.client
     target_url = build_target_url(base_url, path, request.url.query)
     headers = build_upstream_headers(request, forwarded_prefix=forwarded_prefix)
-    body = await request.body()
+    if stripped_headers:
+        stripped = {header_name.lower() for header_name in stripped_headers}
+        headers = {
+            name: value
+            for name, value in headers.items()
+            if name.lower() not in stripped
+        }
+    if header_overrides:
+        headers.update(header_overrides)
+    if body is None:
+        body = await request.body()
 
     upstream_request = client.build_request(
         request.method,
@@ -127,6 +166,9 @@ async def proxy_request(
     try:
         upstream_response = await client.send(upstream_request, stream=True)
     except httpx.HTTPError as exc:
+        logger.error(
+            "Failed forwarding %s to %s: %s", request.url.path, target_url, exc
+        )
         return JSONResponse(
             {
                 "error": "Upstream unavailable",
@@ -149,6 +191,139 @@ async def proxy_request(
     return response
 
 
+def is_linear_webhook_route(subpath: str) -> bool:
+    return subpath.startswith(LINEAR_ROUTE_PREFIX)
+
+
+def is_linear_webhook_request(request: Request, subpath: str) -> bool:
+    return is_linear_webhook_route(subpath) or "linear-signature" in request.headers
+
+
+def compute_linear_signature(secret: str, raw_body: bytes) -> str:
+    return hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+
+
+def verify_linear_signature(
+    signature: str | None, secret: str, raw_body: bytes
+) -> str | None:
+    if not signature:
+        return None
+    expected = compute_linear_signature(secret, raw_body)
+    if hmac.compare_digest(signature.strip().lower(), expected):
+        return expected
+    return None
+
+
+def parse_linear_payload(raw_body: bytes) -> dict | None:
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def extract_linear_event(request: Request, payload: dict | None) -> str | None:
+    header_event = request.headers.get("linear-event", "").strip()
+    payload_type = str((payload or {}).get("type", "")).strip()
+    payload_action = str((payload or {}).get("action", "")).strip()
+
+    event_name = header_event or payload_type
+    if event_name and payload_action:
+        return f"{event_name}.{payload_action}"
+    return event_name or payload_action or None
+
+
+def is_stale_linear_webhook(payload: dict | None, max_age_seconds: int | None) -> bool:
+    if not payload or max_age_seconds is None:
+        return False
+
+    webhook_timestamp = payload.get("webhookTimestamp")
+    if webhook_timestamp in (None, ""):
+        return False
+
+    try:
+        timestamp = float(webhook_timestamp)
+    except (TypeError, ValueError):
+        logger.warning("Invalid Linear webhookTimestamp=%r", webhook_timestamp)
+        return True
+
+    # Linear documents webhookTimestamp in milliseconds. Accept seconds too if
+    # a client ever sends them, then compare against the current wall clock.
+    if timestamp < 1_000_000_000_000:
+        timestamp *= 1000
+
+    return abs(time.time() * 1000 - timestamp) > max_age_seconds * 1000
+
+
+async def linear_webhook(request: Request, subpath: str):
+    secret = linear_webhook_secret()
+    if not secret:
+        logger.error(
+            "LINEAR_WEBHOOK_SECRET is not set; refusing Linear webhook for %s",
+            request.url.path,
+        )
+        return JSONResponse(
+            {"error": "LINEAR_WEBHOOK_SECRET is not configured"},
+            status_code=503,
+        )
+
+    # Signature verification must use the exact raw body bytes Linear sent.
+    # Parsing and re-serializing JSON can change formatting and break HMAC checks.
+    raw_body = await request.body()
+    incoming_signature = request.headers.get("linear-signature")
+    forwarded_signature = verify_linear_signature(incoming_signature, secret, raw_body)
+    if not forwarded_signature:
+        logger.warning(
+            "Rejected Linear webhook for %s from %s: missing or invalid signature",
+            request.url.path,
+            request.client.host if request.client else "unknown",
+        )
+        return JSONResponse({"error": "Invalid Linear signature"}, status_code=401)
+
+    payload = parse_linear_payload(raw_body)
+    if payload is None:
+        logger.warning(
+            "Linear webhook for %s had a valid signature but malformed JSON; forwarding raw body",
+            request.url.path,
+        )
+    elif is_stale_linear_webhook(payload, linear_webhook_max_age_seconds()):
+        logger.warning(
+            "Rejected stale Linear webhook for %s from %s",
+            request.url.path,
+            request.client.host if request.client else "unknown",
+        )
+        return JSONResponse({"error": "Stale Linear webhook"}, status_code=401)
+
+    header_overrides = {
+        "X-Webhook-Signature": forwarded_signature,
+        "X-Webhook-Provider": "linear",
+        "X-Original-Linear-Signature": incoming_signature or "",
+    }
+    event_name = extract_linear_event(request, payload)
+    if event_name:
+        header_overrides["X-Webhook-Event"] = event_name
+
+    delivery_id = request.headers.get("linear-delivery", "").strip()
+    if delivery_id:
+        header_overrides["X-Webhook-Delivery"] = delivery_id
+
+    return await proxy_request(
+        request,
+        webhook_base_url(),
+        "/webhooks" if not subpath else f"/webhooks/{subpath}",
+        body=raw_body,
+        header_overrides=header_overrides,
+        stripped_headers={
+            "Linear-Signature",
+            "X-Webhook-Signature",
+            "X-Webhook-Provider",
+            "X-Webhook-Event",
+            "X-Original-Linear-Signature",
+            "X-Webhook-Delivery",
+        },
+    )
+
+
 async def root(request: Request):
     return JSONResponse(
         {
@@ -157,6 +332,7 @@ async def root(request: Request):
             "dashboard_api": "/api",
             "gateway_api": "/v1",
             "webhooks": "/webhooks",
+            "linear_webhooks": f"/webhooks/{LINEAR_ROUTE_PREFIX}*",
             "health": "/health",
         }
     )
@@ -191,6 +367,9 @@ async def gateway_api(request: Request):
 
 async def webhooks(request: Request):
     subpath = request.path_params.get("path", "")
+    if is_linear_webhook_request(request, subpath):
+        return await linear_webhook(request, subpath)
+
     path = "/webhooks" if not subpath else f"/webhooks/{subpath}"
     return await proxy_request(request, webhook_base_url(), path)
 

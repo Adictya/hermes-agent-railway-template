@@ -27,7 +27,7 @@ One-click deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on
 
 ```bash
 docker build -t hermes-agent .
-docker run --rm -it -p 8080:8080 -e PORT=8080 -e DASHBOARD_PORT=8081 -e ADMIN_PASSWORD=changeme -v hermes-data:/data hermes-agent
+docker run --rm -it -p 8080:8080 -e PORT=8081 -e PROXY_PORT=8080 -e ADMIN_PASSWORD=changeme -v hermes-data:/data hermes-agent
 ```
 
 Open `http://localhost:8080/configure` and log in with `admin` / `changeme`.
@@ -36,10 +36,12 @@ Open `http://localhost:8080/configure` and log in with `admin` / `changeme`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PORT` | `8080` | Public reverse proxy port |
-| `DASHBOARD_PORT` | `8081` | Internal `server.py` port |
+| `PORT` | `8081` | Internal `server.py` port |
+| `PROXY_PORT` | `8080` | Public reverse proxy port |
 | `API_SERVER_PORT` | `8642` | Internal Hermes API server port used for `/v1/*` |
-| `WEBHOOK_PORT` | `8645` | Internal Hermes webhook port used for `/webhooks/*` |
+| `WEBHOOK_PORT` | `8644` | Internal Hermes webhook port used for `/webhooks/*` |
+| `LINEAR_WEBHOOK_SECRET` | *(unset)* | Shared secret used to verify incoming `Linear-Signature` HMACs |
+| `LINEAR_WEBHOOK_MAX_AGE_SECONDS` | `60` | Replay window for Linear `webhookTimestamp`; set `0` to disable |
 | `ADMIN_USERNAME` | `admin` | Basic auth username |
 | `ADMIN_PASSWORD` | *(generated)* | Basic auth password. If unset, a random password is generated and printed to stdout |
 
@@ -49,19 +51,19 @@ All Hermes configuration (LLM providers, messaging channels, tool API keys) is m
 
 ```
 Railway Container
-├── Public Proxy (Starlette + uvicorn) on `$PORT`
+├── Public Proxy (Starlette + uvicorn) on `$PROXY_PORT`
 │   ├── /configure -> internal dashboard
 │   ├── /api/* -> internal dashboard API
 │   ├── /v1/* -> Hermes API server
 │   └── /webhooks/* -> Hermes webhook server
-├── Internal Dashboard (`server.py`) on `$DASHBOARD_PORT`
+├── Internal Dashboard (`server.py`) on `$PORT`
 │   ├── / — Config editor + status dashboard
 │   ├── /health — Dashboard health check
 │   └── /api/* — Config, status, logs, gateway control
 └── hermes gateway — managed as async subprocess by `server.py`
 ```
 
-The public listener runs on `$PORT` and forwards `/configure` to the existing dashboard while keeping Hermes HTTP endpoints available on the same external port. `server.py` still manages the Hermes gateway as a child process, and gateway stdout/stderr is captured into a ring buffer viewable in the dashboard.
+The public listener runs on `$PROXY_PORT` and forwards `/configure` to the existing dashboard on `$PORT` while keeping Hermes HTTP endpoints available on the same external port. `server.py` still manages the Hermes gateway as a child process, and gateway stdout/stderr is captured into a ring buffer viewable in the dashboard.
 
 ## API Endpoints
 
@@ -79,6 +81,33 @@ The public listener runs on `$PORT` and forwards `/configure` to the existing da
 | `POST` | `/api/gateway/restart` | Yes | Restart gateway |
 | `*` | `/v1/*` | Depends on Hermes config | Forwarded to Hermes API server |
 | `*` | `/webhooks/*` | Depends on Hermes config | Forwarded to Hermes webhook server |
+
+## Linear Webhooks
+
+Routes under `/webhooks/linear-*` are treated as Linear webhook endpoints by the public proxy.
+
+- The proxy reads the exact raw request bytes before parsing JSON.
+- It verifies `Linear-Signature` with `LINEAR_WEBHOOK_SECRET` using HMAC-SHA256.
+- It optionally rejects stale payloads when `webhookTimestamp` is older than `LINEAR_WEBHOOK_MAX_AGE_SECONDS`.
+- It forwards the original raw body unchanged to Hermes and adds:
+  - `X-Webhook-Signature`
+  - `X-Webhook-Provider: linear`
+  - `X-Webhook-Event`
+  - `X-Original-Linear-Signature`
+
+Example request to a Hermes route named `linear-new-ticket`:
+
+```bash
+export LINEAR_WEBHOOK_SECRET=replace-me
+payload='{"action":"create","type":"Issue","webhookTimestamp":'"$(($(date +%s) * 1000))"',"data":{"title":"Proxy test"}}'
+signature=$(printf '%s' "$payload" | openssl dgst -sha256 -hmac "$LINEAR_WEBHOOK_SECRET" -hex | awk '{print $2}')
+
+curl -i "http://localhost:8080/webhooks/linear-new-ticket" \
+  -H 'Content-Type: application/json' \
+  -H 'Linear-Event: Issue' \
+  -H "Linear-Signature: $signature" \
+  --data-binary "$payload"
+```
 
 ## Supported Providers
 
