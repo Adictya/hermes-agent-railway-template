@@ -332,6 +332,7 @@ async def root(request: Request):
             "dashboard_api": "/api",
             "gateway_api": "/v1",
             "webhooks": "/webhooks",
+            "default_passthrough": "/*",
             "linear_webhooks": f"/webhooks/{LINEAR_ROUTE_PREFIX}*",
             "health": "/health",
         }
@@ -374,6 +375,12 @@ async def webhooks(request: Request):
     return await proxy_request(request, webhook_base_url(), path)
 
 
+async def default_gateway_passthrough(request: Request):
+    subpath = request.path_params.get("path", "")
+    path = "/" if not subpath else f"/{subpath}"
+    return await proxy_request(request, webhook_base_url(), path)
+
+
 @asynccontextmanager
 async def lifespan(app):
     timeout = httpx.Timeout(connect=5.0, read=None, write=None, pool=None)
@@ -394,6 +401,7 @@ app = Starlette(
         Route("/v1/{path:path}", gateway_api, methods=ALL_METHODS),
         Route("/webhooks", webhooks, methods=ALL_METHODS),
         Route("/webhooks/{path:path}", webhooks, methods=ALL_METHODS),
+        Route("/{path:path}", default_gateway_passthrough, methods=ALL_METHODS),
     ],
     lifespan=lifespan,
 )
