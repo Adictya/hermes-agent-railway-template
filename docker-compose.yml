@@ -3,6 +3,16 @@ services:
     build: .
     env_file:
       - .env
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - PROXY_PORT=8080
+      - DASHBOARD_PORT=8081
+      - API_SERVER_PORT=8642
+      - WEBHOOK_PORT=8644
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=admin
     restart: unless-stopped
     volumes:
       - hermes-data:/data

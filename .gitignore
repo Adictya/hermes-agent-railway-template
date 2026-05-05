@@ -10,3 +10,4 @@ venv/
 *.swo
 .DS_Store
 .references/
+.ruff_cache/
