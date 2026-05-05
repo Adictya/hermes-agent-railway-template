@@ -4,7 +4,7 @@ ARG TASK_MANAGER_REPO_URL=https://github.com/Adictya/taskwarrior-task-management
 ARG TASK_MANAGER_REPO_REF=29bcf556d6fcbd1c584b323f96e703de4da2362a
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates ffmpeg git gh nodejs taskwarrior && \
+    apt-get install -y --no-install-recommends curl ca-certificates git gh nodejs taskwarrior && \
     rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent && \
