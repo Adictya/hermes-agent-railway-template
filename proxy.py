@@ -325,18 +325,7 @@ async def linear_webhook(request: Request, subpath: str):
 
 
 async def root(request: Request):
-    return JSONResponse(
-        {
-            "service": "hermes gateway proxy",
-            "dashboard": "/configure",
-            "dashboard_api": "/api",
-            "gateway_api": "/v1",
-            "webhooks": "/webhooks",
-            "default_passthrough": "/*",
-            "linear_webhooks": f"/webhooks/{LINEAR_ROUTE_PREFIX}*",
-            "health": "/health",
-        }
-    )
+    return JSONResponse({"error": "Not Found"}, status_code=404)
 
 
 async def health(request: Request):
