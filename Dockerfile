@@ -9,7 +9,10 @@ RUN apt-get update && \
 
 RUN npm install -g @google/gemini-cli
 
-ENV UV_HTTP_TIMEOUT=120
+ENV HOME=/data \
+    HERMES_HOME=/data/.hermes \
+    UV_HTTP_TIMEOUT=120 \
+    UV_CONCURRENT_DOWNLOADS=4
 
 RUN git clone --depth 1 --branch custom https://github.com/Adictya/hermes-agent.git /tmp/hermes-agent && \
     cd /tmp/hermes-agent && \
@@ -33,8 +36,5 @@ COPY start.sh /app/start.sh
 COPY task-agent /usr/local/bin/task-agent
 RUN chmod +x /app/start.sh
 RUN chmod +x /usr/local/bin/task-agent
-
-ENV HOME=/data
-ENV HERMES_HOME=/data/.hermes
 
 CMD ["/app/start.sh"]
