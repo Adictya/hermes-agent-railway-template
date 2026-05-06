@@ -11,8 +11,7 @@ RUN npm install -g @google/gemini-cli
 
 RUN git clone --depth 1 --branch custom https://github.com/Adictya/hermes-agent.git /tmp/hermes-agent && \
     cd /tmp/hermes-agent && \
-    uv pip install --system --no-cache -e ".[all]" && \
-    rm -rf /tmp/hermes-agent/.git
+    uv pip install --system --no-cache -e ".[all]"
 
 COPY requirements.txt /app/requirements.txt
 RUN uv pip install --system --no-cache -r /app/requirements.txt
