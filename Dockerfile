@@ -4,10 +4,12 @@ ARG TASK_MANAGER_REPO_URL=https://github.com/Adictya/taskwarrior-task-management
 ARG TASK_MANAGER_REPO_REF=29bcf556d6fcbd1c584b323f96e703de4da2362a
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates git gh nodejs taskwarrior && \
+    apt-get install -y --no-install-recommends curl ca-certificates git gh nodejs npm taskwarrior && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent && \
+RUN npm install -g @google/gemini-cli
+
+RUN git clone --depth 1 --branch custom https://github.com/Adictya/hermes-agent.git /tmp/hermes-agent && \
     cd /tmp/hermes-agent && \
     uv pip install --system --no-cache -e ".[all]" && \
     rm -rf /tmp/hermes-agent/.git
