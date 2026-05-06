@@ -14,6 +14,7 @@ ENV HOME=/data \
     UV_HTTP_TIMEOUT=120 \
     UV_CONCURRENT_DOWNLOADS=4
 
+ADD https://api.github.com/repos/Adictya/hermes-agent/commits/custom /tmp/hermes-agent-latest-commit.json
 RUN git clone --depth 1 --branch custom https://github.com/Adictya/hermes-agent.git /tmp/hermes-agent && \
     cd /tmp/hermes-agent && \
     uv pip install --system --no-cache -e ".[all]"
