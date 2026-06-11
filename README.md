@@ -6,7 +6,8 @@ Deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) on [Railway]
 
 ## What you get
 
-- **Single-Port Proxy** — one public listener exposes `/configure`, `/api`, `/v1`, and `/webhooks`
+- **Single-Port Proxy** — one public listener exposes `/configure`, `/api`, `/v1`, `/webhooks`, and `/notes`
+- **ZenNotes Notes Server** — a [ZenNotes](https://github.com/ZenNotes/zennotes) Markdown/Obsidian-vault editor at `/notes`, gated by admin Basic auth
 - **Web Config UI** — configure LLM providers, messaging channels, tool API keys, model settings, and user pairing from your browser
 - **Gateway Management** — start, stop, restart, and view gateway logs from the UI
 - **Bundled Taskwarrior Tooling** — `taskwarrior`, `node`, and `task-agent` are available in the container
@@ -43,6 +44,9 @@ Taskwarrior data uses the default home-based path, so with `HOME=/data` the task
 | `DASHBOARD_PORT` | `8081` | Internal config UI server port |
 | `API_SERVER_PORT` | `8642` | Internal Hermes API server port used for `/v1/*` |
 | `WEBHOOK_PORT` | `8644` | Internal Hermes webhook port used for `/webhooks/*` |
+| `ZENNOTES_PORT` | `7878` | Internal ZenNotes server port surfaced through `/notes/*` |
+| `ZENNOTES_VAULT_PATH` | `/data/Documents/Obsidian Vault` | Markdown/Obsidian vault root ZenNotes serves and edits |
+| `ZENNOTES_AUTH_TOKEN` | *(generated)* | ZenNotes auth token. If unset, one is generated, persisted at `/data/.zennotes/auth-token`, and printed to stdout |
 | `HERMES_HOME` | `/data/.hermes` | Persistent Hermes home directory |
 | `ADMIN_USERNAME` | `admin` | Basic auth username |
 | `ADMIN_PASSWORD` | *(generated)* | Basic auth password. If unset, a random password is generated and printed to stdout |
@@ -86,17 +90,22 @@ Railway Container
 │   ├── creates persistent Hermes directories under /data/.hermes
 │   ├── seeds /data/.hermes/skills/taskwarrior-task-manager/SKILL.md
 │   ├── creates /data/.task and /data/.taskrc for Taskwarrior
+│   ├── creates the ZenNotes vault dir and /data/.zennotes
+│   ├── starts ZenNotes (zennotes-server) on 127.0.0.1:$ZENNOTES_PORT
 │   ├── starts Internal Dashboard (server.py) on $DASHBOARD_PORT
 │   └── starts Public Proxy (proxy.py) on $PROXY_PORT
 ├── Public Proxy (Starlette + uvicorn)
 │   ├── /configure -> internal dashboard
 │   ├── /api/* -> internal dashboard API
 │   ├── /v1/* -> Hermes API server
-│   └── /webhooks/* -> Hermes webhook server
+│   ├── /webhooks/* -> Hermes webhook server
+│   └── /notes/* -> ZenNotes server (admin Basic auth)
 ├── Internal Dashboard (server.py)
 │   ├── / — Config editor + status dashboard
 │   ├── /health — Dashboard health check
 │   └── /api/* — Config, status, logs, gateway control
+├── ZenNotes (zennotes-server)
+│   └── serves $ZENNOTES_VAULT_PATH under base path /notes
 ├── /usr/local/bin/task-agent
 │   └── wraps node /opt/taskwrrior-task-manager/dist/task-agent.js
 └── hermes gateway — managed as async subprocess by server.py
@@ -120,6 +129,25 @@ The public listener forwards `/configure` to the dashboard while keeping Hermes 
 | `POST` | `/api/gateway/restart` | Yes | Restart gateway |
 | `*` | `/v1/*` | Depends on Hermes config | Forwarded to Hermes API server |
 | `*` | `/webhooks/*` | Depends on Hermes config | Forwarded to Hermes webhook server |
+| `*` | `/notes/*` | Yes (ZenNotes token) | Forwarded to the ZenNotes server |
+
+## ZenNotes
+
+A self-hosted [ZenNotes](https://github.com/ZenNotes/zennotes) server is built into the image and serves your Markdown/Obsidian vault at `/notes`.
+
+- The vault lives at `ZENNOTES_VAULT_PATH` (default `/data/Documents/Obsidian Vault`) on the persistent volume and is created on boot.
+- ZenNotes binds to `127.0.0.1:$ZENNOTES_PORT` and is protected by its own auth token. Set `ZENNOTES_AUTH_TOKEN`, or let boot generate one — it is persisted at `/data/.zennotes/auth-token` and printed to the deploy logs.
+
+**Browser:** open `https://<your-app>/notes` and enter the token when prompted; ZenNotes exchanges it for a session cookie. The proxy rewrites the cookie's path to `/notes/api` so it works under the base path.
+
+**Desktop / mobile app:** the ZenNotes app can connect to this server as a remote workspace. Use:
+
+- **Server URL:** `https://<your-app>/notes`
+- **Auth token:** the same `ZENNOTES_AUTH_TOKEN`
+
+The desktop app authenticates with a Bearer token (no cookies), so it works through the same endpoint.
+
+> **WebSocket limitation:** the public proxy uses `httpx`, which does not forward WebSockets, so ZenNotes' live file-watch (`/notes/api/watch`) does not work through the public port. Notes still load, save, and search over HTTP in both the browser and the app; only live updates from external vault changes are unavailable.
 
 ## Linear Webhooks
 

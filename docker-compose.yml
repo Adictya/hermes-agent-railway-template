@@ -11,6 +11,8 @@ services:
       - DASHBOARD_PORT=8081
       - API_SERVER_PORT=8642
       - WEBHOOK_PORT=8644
+      - ZENNOTES_PORT=7878
+      - ZENNOTES_VAULT_PATH=/data/Documents/Obsidian Vault
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin
     restart: unless-stopped

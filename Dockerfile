@@ -1,3 +1,35 @@
+# --- ZenNotes web bundle build ---
+# Builds the Vite/PWA web client; the static bundle is later embedded into the
+# Go server binary. Runs on the native build platform (no QEMU needed).
+FROM node:22-alpine AS zennotes-web
+ARG ZENNOTES_REPO_URL=https://github.com/ZenNotes/zennotes.git
+ARG ZENNOTES_REPO_REF=1e3a6f104c2c9a39a7cc6c5243387e3d21957fe2
+RUN apk add --no-cache git
+WORKDIR /src
+RUN git init . && \
+    git remote add origin "$ZENNOTES_REPO_URL" && \
+    git fetch --depth 1 origin "$ZENNOTES_REPO_REF" && \
+    git checkout FETCH_HEAD
+RUN npm ci --no-audit --no-fund --loglevel=error
+RUN npm run build --workspace @zennotes/web
+
+# --- ZenNotes server build ---
+# Pure-Go static binary (CGO off) with the web bundle embedded via go:embed.
+FROM golang:1.22-alpine AS zennotes-server
+ARG ZENNOTES_REPO_URL=https://github.com/ZenNotes/zennotes.git
+ARG ZENNOTES_REPO_REF=1e3a6f104c2c9a39a7cc6c5243387e3d21957fe2
+RUN apk add --no-cache git
+WORKDIR /src
+RUN git init . && \
+    git remote add origin "$ZENNOTES_REPO_URL" && \
+    git fetch --depth 1 origin "$ZENNOTES_REPO_REF" && \
+    git checkout FETCH_HEAD
+WORKDIR /src/apps/server
+RUN go mod download
+COPY --from=zennotes-web /src/apps/web/dist/ /src/apps/server/web/dist/
+ENV CGO_ENABLED=0 GOOS=linux GOFLAGS=-trimpath
+RUN go build -ldflags="-s -w" -o /out/zennotes-server ./cmd/zennotes-server
+
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
 
 ARG TASK_MANAGER_REPO_URL=https://github.com/Adictya/taskwarrior-task-management-skill.git
@@ -35,7 +67,9 @@ COPY proxy.py /app/proxy.py
 COPY templates/ /app/templates/
 COPY start.sh /app/start.sh
 COPY task-agent /usr/local/bin/task-agent
+COPY --from=zennotes-server /out/zennotes-server /usr/local/bin/zennotes-server
 RUN chmod +x /app/start.sh
 RUN chmod +x /usr/local/bin/task-agent
+RUN chmod +x /usr/local/bin/zennotes-server
 
 CMD ["/app/start.sh"]

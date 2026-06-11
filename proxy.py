@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -80,6 +81,23 @@ def webhook_base_url() -> str:
     return f"http://127.0.0.1:{port}"
 
 
+def zennotes_base_url() -> str:
+    port = os.environ.get("ZENNOTES_PORT", "7878")
+    return f"http://127.0.0.1:{port}"
+
+
+# ZenNotes hardcodes its session cookie to Path=/api, but the app is mounted
+# under the /notes base path, so the browser would never send that cookie back
+# to /notes/api/*. Rewrite the Set-Cookie path to carry the base-path prefix.
+COOKIE_PATH_RE = re.compile(r"(?i)(;\s*path\s*=\s*)(/[^;,\s]*)")
+
+
+def prefix_cookie_path(set_cookie_value: str, prefix: str) -> str:
+    return COOKIE_PATH_RE.sub(
+        lambda m: f"{m.group(1)}{prefix}{m.group(2)}", set_cookie_value, count=1
+    )
+
+
 def linear_webhook_secret() -> str:
     return merged_env().get("LINEAR_WEBHOOK_SECRET", "")
 
@@ -140,6 +158,7 @@ async def proxy_request(
     body: bytes | None = None,
     header_overrides: dict[str, str] | None = None,
     stripped_headers: set[str] | None = None,
+    set_cookie_path_prefix: str | None = None,
 ):
     client: httpx.AsyncClient = request.app.state.client
     target_url = build_target_url(base_url, path, request.url.query)
@@ -183,11 +202,15 @@ async def proxy_request(
         status_code=upstream_response.status_code,
         background=BackgroundTask(upstream_response.aclose),
     )
-    response.raw_headers = [
-        (name.lower().encode("latin-1"), value.encode("latin-1"))
-        for name, value in upstream_response.headers.multi_items()
-        if name.lower() not in HOP_BY_HOP_HEADERS
-    ]
+    raw_headers = []
+    for name, value in upstream_response.headers.multi_items():
+        lower_name = name.lower()
+        if lower_name in HOP_BY_HOP_HEADERS:
+            continue
+        if set_cookie_path_prefix and lower_name == "set-cookie":
+            value = prefix_cookie_path(value, set_cookie_path_prefix)
+        raw_headers.append((lower_name.encode("latin-1"), value.encode("latin-1")))
+    response.raw_headers = raw_headers
     return response
 
 
@@ -364,6 +387,19 @@ async def webhooks(request: Request):
     return await proxy_request(request, webhook_base_url(), path)
 
 
+async def notes(request: Request):
+    # ZenNotes enforces its own auth token (Bearer for the desktop app, a
+    # session cookie for the browser), so the proxy just forwards. The /notes
+    # prefix is preserved because ZenNotes is served under that base path, and
+    # the session cookie's path is rewritten to /notes/api so the browser
+    # sends it back to the mounted API.
+    subpath = request.path_params.get("path", "")
+    path = "/notes" if not subpath else f"/notes/{subpath}"
+    return await proxy_request(
+        request, zennotes_base_url(), path, set_cookie_path_prefix="/notes"
+    )
+
+
 async def default_gateway_passthrough(request: Request):
     subpath = request.path_params.get("path", "")
     path = "/" if not subpath else f"/{subpath}"
@@ -390,6 +426,8 @@ app = Starlette(
         Route("/v1/{path:path}", gateway_api, methods=ALL_METHODS),
         Route("/webhooks", webhooks, methods=ALL_METHODS),
         Route("/webhooks/{path:path}", webhooks, methods=ALL_METHODS),
+        Route("/notes", notes, methods=ALL_METHODS),
+        Route("/notes/{path:path}", notes, methods=ALL_METHODS),
         Route("/{path:path}", default_gateway_passthrough, methods=ALL_METHODS),
     ],
     lifespan=lifespan,
